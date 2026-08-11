@@ -28,6 +28,9 @@
 #ifdef __SWITCH__
 #include "switch_impl.h"
 #endif
+#ifdef __IOS__
+#include "platform/ios/ios_impl.h"
+#endif
 
 #include "assets/smw_assets.h"
 
@@ -43,7 +46,7 @@ typedef struct GamepadInfo {
 
 static void SDLCALL AudioCallback(void *userdata, Uint8 *stream, int len);
 static void LoadAssets();
-static void SwitchDirectory();
+static void SwitchDirectory(const char *executable);
 static void RenderNumber(uint8 *dst, size_t pitch, int n, uint8 big);
 static void OpenOneGamepad(int i);
 static uint32 GetActiveControllers(void);
@@ -61,8 +64,8 @@ bool g_new_ppu = true;
 bool g_other_image = true;
 struct SpcPlayer *g_spc_player;
 
-static uint8_t g_pixels[256 * 4 * 240];
-static uint8_t g_my_pixels[256 * 4 * 240];
+static uint8_t g_pixels[kPpuXPixels * 4 * 240];
+static uint8_t g_my_pixels[kPpuXPixels * 4 * 240];
 
 int g_got_mismatch_count;
 
@@ -178,10 +181,14 @@ static SDL_HitTestResult HitTestCallback(SDL_Window *win, const SDL_Point *pt, v
 
 void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   g_rtl_game_info->draw_ppu_frame();
-  
+
   uint8 *ppu_pixels = g_other_image ? g_my_pixels : g_pixels;
+  int extra = (g_snes_width - 256) / 2;
+  size_t source_offset = (kPpuExtraLeftRight - extra) * 4;
   for (size_t y = 0, y_end = g_snes_height; y < y_end; y++)
-    memcpy((uint8 *)pixel_buffer + y * pitch, ppu_pixels + y * 256 * 4, 256 * 4);
+    memcpy((uint8 *)pixel_buffer + y * pitch,
+           ppu_pixels + y * kPpuXPixels * 4 + source_offset,
+           g_snes_width * 4);
 }
 
 static void DrawPpuFrameWithPerf(void) {
@@ -217,6 +224,8 @@ static void DrawPpuFrameWithPerf(void) {
 
 static SDL_mutex *g_audio_mutex;
 static uint8 *g_audiobuffer, *g_audiobuffer_cur, *g_audiobuffer_end;
+static int g_audio_sample_rate;
+static int g_audio_frame_remainder;
 static int g_frames_per_block;
 static uint8 g_audio_channels;
 static SDL_AudioDeviceID g_audio_device;
@@ -233,11 +242,17 @@ static void SDLCALL AudioCallback(void *userdata, Uint8 *stream, int len) {
   if (SDL_LockMutex(g_audio_mutex)) Die("Mutex lock failed!");
   while (len != 0) {
     if (g_audiobuffer_end - g_audiobuffer_cur == 0) {
+      // The DSP emits exactly 534 samples per 60 Hz game frame (32,040 Hz).
+      // Carry the division remainder so rates such as 32 kHz do not drift.
+      g_audio_frame_remainder += g_audio_sample_rate;
+      g_frames_per_block = g_audio_frame_remainder / 60;
+      g_audio_frame_remainder %= 60;
       RtlRenderAudio((int16 *)g_audiobuffer, g_frames_per_block, g_audio_channels);
       g_audiobuffer_cur = g_audiobuffer;
       g_audiobuffer_end = g_audiobuffer + g_frames_per_block * g_audio_channels * sizeof(int16);
     }
-    int n = IntMin(len, g_audiobuffer_end - g_audiobuffer_cur);
+    int buffered_bytes = (int)(g_audiobuffer_end - g_audiobuffer_cur);
+    int n = IntMin(len, buffered_bytes);
     if (g_sdl_audio_mixer_volume == SDL_MIX_MAXVOLUME) {
       memcpy(stream, g_audiobuffer_cur, n);
     } else {
@@ -277,11 +292,14 @@ static bool SdlRenderer_Init(SDL_Window *window) {
     printf("\n");
   }
   g_renderer = renderer;
-  if (!g_config.ignore_aspect_ratio)
+  if (!g_config.ignore_aspect_ratio) {
     SDL_RenderSetLogicalSize(renderer, g_snes_width, g_snes_height);
-  if (g_config.linear_filtering)
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "best");
-
+#ifdef __IOS__
+    SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
+#endif
+  }
+  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,
+              g_config.linear_filtering ? "best" : "nearest");
   int tex_mult = 1;
   g_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                 g_snes_width * tex_mult, g_snes_height * tex_mult);
@@ -289,6 +307,8 @@ static bool SdlRenderer_Init(SDL_Window *window) {
     printf("Failed to create texture: %s\n", SDL_GetError());
     return false;
   }
+  SDL_SetTextureScaleMode(g_texture, g_config.linear_filtering ? SDL_ScaleModeLinear
+                                                               : SDL_ScaleModeNearest);
   return true;
 }
 
@@ -333,18 +353,26 @@ void MkDir(const char *s) {
 #endif
 }
 
+#ifndef __IOS__
 #undef main
+#endif
 int main(int argc, char** argv) {
 #ifdef __SWITCH__
   SwitchImpl_Init();
 #endif
+  const char *executable = argc > 0 ? argv[0] : NULL;
   argc--, argv++;
   const char *config_file = NULL;
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
     config_file = argv[1];
     argc -= 2, argv += 2;
   } else {
-    SwitchDirectory();
+#ifdef __IOS__
+    if (!IosImpl_PrepareRuntime())
+      return 1;
+#else
+    SwitchDirectory(executable);
+#endif
   }
   if (argc >= 1 && strcmp(argv[0], "--debug") == 0) {
     g_debug_flag = true;
@@ -352,10 +380,20 @@ int main(int argc, char** argv) {
   }
   ParseConfigFile(config_file);
 
+#ifdef __IOS__
+  // Desktop display experiments should not leak into the phone build. The
+  // touch layout is designed around the original 256x224 game frame.
+  g_config.ignore_aspect_ratio = false;
+  g_config.linear_filtering = false;
+  g_config.widescreen_mode = kWidescreenMode_Normal;
+#endif
+
   LoadAssets();
 
   g_gamepad[0].joystick_id = g_gamepad[1].joystick_id = -1;
-  g_snes_width = (g_config.extended_aspect_ratio * 2 + 256);
+  g_snes_width = g_config.widescreen_mode == kWidescreenMode_Ultrawide ? 512 :
+                 g_config.widescreen_mode == kWidescreenMode_Extrawide ? 384 :
+                 g_config.widescreen_mode == kWidescreenMode_Widescreen ? 352 : 256;
   g_snes_height = 224;// (g_config.extend_y ? 240 : 224);
   g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
     //    g_config.enhanced_mode7 * kPpuRenderFlags_4x4Mode7 |
@@ -383,6 +421,12 @@ int main(int argc, char** argv) {
     g_config.audio_samples = kDefaultSamples;
 
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+#ifdef __IOS__
+  SDL_SetHint(SDL_HINT_IOS_HIDE_HOME_INDICATOR, "2");
+  SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+  g_win_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+  IosImpl_ConfigureAudioSession();
+#endif
 
   // set up SDL
   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -395,8 +439,13 @@ int main(int argc, char** argv) {
   int window_height = custom_size ? g_config.window_height : g_current_window_scale * g_snes_height;
 
   if (g_config.output_method == kOutputMethod_OpenGL) {
+#ifdef __IOS__
+    g_config.output_method = kOutputMethod_SDL;
+    g_renderer_funcs = kSdlRendererFuncs;
+#else
     g_win_flags |= SDL_WINDOW_OPENGL;
     OpenGLRenderer_Create(&g_renderer_funcs);
+#endif
   } else {
     g_renderer_funcs = kSdlRendererFuncs;
   }
@@ -433,6 +482,10 @@ error_reading:;
   if (!g_renderer_funcs.Initialize(window))
     return 1;
 
+#ifdef __IOS__
+  IosImpl_InstallTouchControls();
+#endif
+
   g_audio_mutex = SDL_CreateMutex();
   if (!g_audio_mutex) Die("No mutex");
 
@@ -452,18 +505,25 @@ error_reading:;
     want.channels = 2;
     want.samples = g_config.audio_samples;
     want.callback = &AudioCallback;
-    g_audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    g_audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have,
+                                         SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
     if (g_audio_device == 0) {
       printf("Failed to open audio device: %s\n", SDL_GetError());
       return 1;
     }
-    g_audio_channels = 2;
-    g_frames_per_block = (534 * have.freq) / 32000;
-    g_audiobuffer = (uint8 *)calloc(g_frames_per_block * have.channels * sizeof(int16), 1);
+    g_audio_channels = have.channels;
+    g_audio_sample_rate = have.freq;
+    g_audio_frame_remainder = 0;
+    int max_frames_per_block = (have.freq + 59) / 60;
+    g_audiobuffer = (uint8 *)calloc(max_frames_per_block * have.channels * sizeof(int16), 1);
+    g_audiobuffer_cur = g_audiobuffer;
+    g_audiobuffer_end = g_audiobuffer;
   }
 
-  PpuBeginDrawing(g_snes->ppu, g_pixels, 256 * 4, 0);
-  PpuBeginDrawing(g_my_ppu, g_my_pixels, 256 * 4, 0);
+  PpuBeginDrawing(g_snes->ppu, g_pixels, kPpuXPixels * 4, 0);
+  PpuBeginDrawing(g_my_ppu, g_my_pixels, kPpuXPixels * 4, 0);
+  PpuSetExtraViewport(g_snes->ppu, g_snes_width);
+  PpuSetExtraViewport(g_my_ppu, g_snes_width);
 
   if (g_config.save_playthrough)
     MkDir("playthrough");
@@ -492,6 +552,10 @@ error_reading:;
       switch (event.type) {
       case SDL_CONTROLLERDEVICEADDED:
         OpenOneGamepad(event.cdevice.which);
+#ifdef __IOS__
+        IosImpl_SetControllerConnected(g_gamepad[0].joystick_id != -1 ||
+                                       g_gamepad[1].joystick_id != -1);
+#endif
         break;
       case SDL_CONTROLLERDEVICEREMOVED:
         gi = GetGamepadInfo(event.cdevice.which);
@@ -499,7 +563,24 @@ error_reading:;
           memset(gi, 0, sizeof(GamepadInfo));
           gi->joystick_id = -1;
         }
+#ifdef __IOS__
+        IosImpl_SetControllerConnected(g_gamepad[0].joystick_id != -1 ||
+                                       g_gamepad[1].joystick_id != -1);
+#endif
         break;
+#ifdef __IOS__
+      case SDL_APP_WILLENTERBACKGROUND:
+        IosImpl_ReleaseAllInputs();
+        IosImpl_SetAudioSessionActive(false);
+        if (g_audio_device)
+          SDL_PauseAudioDevice(g_audio_device, 1);
+        break;
+      case SDL_APP_DIDENTERFOREGROUND:
+        IosImpl_SetAudioSessionActive(true);
+        if (g_audio_device && !g_paused)
+          SDL_PauseAudioDevice(g_audio_device, 0);
+        break;
+#endif
       case SDL_CONTROLLERAXISMOTION:
         gi = GetGamepadInfo(event.caxis.which);
         if (gi)
@@ -539,6 +620,20 @@ error_reading:;
       }
     }
 
+#ifdef __IOS__
+    uint32_t ios_actions = IosImpl_TakePendingActions();
+    if (ios_actions & kIosImplActionReset)
+      RtlReset(1);
+    if (ios_actions & kIosImplActionSaveState)
+      RtlSaveLoad(kSaveLoad_Save, 0);
+    if (ios_actions & kIosImplActionLoadState) {
+      RtlSaveLoad(kSaveLoad_Load, 0);
+      DrawPpuFrameWithPerf();
+    }
+    if (ios_actions & kIosImplActionQuit)
+      running = false;
+#endif
+
     if (g_paused != audiopaused) {
       audiopaused = g_paused;
       if (g_audio_device)
@@ -556,6 +651,9 @@ error_reading:;
     if (g_input_state & 0xf0000)
       g_gamepad[1].axis_buttons = 0;
     uint32 inputs = g_input_state | g_gamepad[0].axis_buttons | g_gamepad[1].axis_buttons << 12;
+#ifdef __IOS__
+    inputs |= IosImpl_GetTouchInput();
+#endif
     uint8 is_replay = RtlRunFrame(inputs | GetActiveControllers());
 
     frameCtr++;
@@ -951,8 +1049,23 @@ const uint8 *FindPtrInAsset(int asset, uint32 addr) {
 }
 
 // Go some steps up and find smw.ini
-static void SwitchDirectory(void) {
+static void SwitchDirectory(const char *executable) {
   char buf[4096];
+  if (executable && strchr(executable, '/')) {
+    size_t len = strlen(executable);
+    if (len >= sizeof(buf))
+      return;
+    memcpy(buf, executable, len + 1);
+    char *slash = strrchr(buf, '/');
+    if (slash) {
+      if (slash == buf)
+        slash[1] = 0;
+      else
+        *slash = 0;
+      if (chdir(buf) == 0)
+        return;
+    }
+  }
   if (!getcwd(buf, sizeof(buf) - 32))
     return;
   size_t pos = strlen(buf);

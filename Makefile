@@ -7,6 +7,10 @@ PYTHON:=/usr/bin/env python3
 CFLAGS:=$(if $(CFLAGS),$(CFLAGS),-O2 -fno-strict-aliasing -Werror )
 CFLAGS:=${CFLAGS} $(shell sdl2-config --cflags) -DSYSTEM_VOLUME_MIXER_AVAILABLE=0 -I.
 
+ifeq ($(shell uname -s),Darwin)
+    CFLAGS += -Wno-tautological-constant-out-of-range-compare
+endif
+
 ifeq (${OS},Windows_NT)
     WINDRES:=windres
 #    RES:=sm.res

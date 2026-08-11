@@ -5,6 +5,7 @@
 #include "snes/snes.h"
 #include "tracing.h"
 #include "util.h"
+#include "config.h"
 #include <time.h>
 
 enum RunMode { RM_BOTH, RM_MINE, RM_THEIRS };
@@ -361,6 +362,16 @@ getout:
 
 void RtlRunFrameCompare() {
   g_use_my_apu_code = (g_runmode != RM_THEIRS);
+
+  // Extended viewports intentionally diverge from the reference renderer,
+  // so skip state comparison while testing widescreen output.
+  if (g_config.widescreen_mode != kWidescreenMode_Normal) {
+    g_ppu = g_my_ppu;
+    g_snes->runningWhichVersion = 2;
+    g_rtl_game_info->run_frame();
+    g_snes->runningWhichVersion = 0;
+    return;
+  }
 
   if (g_runmode == RM_THEIRS) {
     g_ppu = g_snes->ppu;

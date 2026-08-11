@@ -18,6 +18,11 @@ uint8 g_ram[0x20000];
 uint8 *g_sram;
 int g_sram_size;
 const uint8 *g_rom;
+int RtlGetViewportExtra(void) {
+  return g_config.widescreen_mode == kWidescreenMode_Ultrawide ? 128 :
+         g_config.widescreen_mode == kWidescreenMode_Extrawide ? 64 :
+         g_config.widescreen_mode == kWidescreenMode_Widescreen ? 48 : 0;
+}
 bool g_is_uploading_apu;
 bool g_did_finish_level_hook;
 uint8 game_id;

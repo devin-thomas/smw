@@ -46,6 +46,13 @@ enum {
   kOutputMethod_OpenGL,
 };
 
+enum {
+  kWidescreenMode_Normal,
+  kWidescreenMode_Widescreen,
+  kWidescreenMode_Extrawide,
+  kWidescreenMode_Ultrawide,
+};
+
 typedef struct Config {
   int window_width;
   int window_height;
@@ -57,6 +64,7 @@ typedef struct Config {
   bool enable_audio;
   bool linear_filtering;
   uint8 output_method;
+  uint8 widescreen_mode;
   uint16 audio_freq;
   uint8 audio_channels;
   uint16 audio_samples;

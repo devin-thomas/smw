@@ -25,8 +25,8 @@ typedef struct BgLayer {
 } BgLayer;
 
 enum {
-  kPpuXPixels = 256,
-  kPpuExtraLeftRight = 0,
+  kPpuXPixels = 512,
+  kPpuExtraLeftRight = 128,
 };
 
 typedef uint16_t PpuZbufType;
@@ -222,6 +222,7 @@ void ppu_reset(Ppu* ppu);
 bool ppu_checkOverscan(Ppu* ppu);
 void ppu_handleVblank(Ppu* ppu);
 void ppu_runLine(Ppu* ppu, int line);
+void PpuSetExtraViewport(Ppu *ppu, int width);
 uint8_t ppu_read(Ppu* ppu, uint8_t adr);
 void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val);
 void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli);

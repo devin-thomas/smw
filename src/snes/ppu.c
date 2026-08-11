@@ -20,7 +20,7 @@ static uint16_t ppu_getVramRemap(Ppu* ppu);
 
 
 Ppu* ppu_init(void) {
-  Ppu* ppu = malloc(sizeof(Ppu));
+  Ppu* ppu = calloc(1, sizeof(Ppu));
   return ppu;
 }
 
@@ -40,9 +40,15 @@ void ppu_reset(Ppu* ppu) {
   {
     size_t pitch = ppu->renderPitch;
     uint8_t *renderBuffer = ppu->renderBuffer;
+    uint8_t extraLeftCur = ppu->extraLeftCur;
+    uint8_t extraRightCur = ppu->extraRightCur;
+    uint8_t extraLeftRight = ppu->extraLeftRight;
     memset(ppu, 0, sizeof(*ppu));
     ppu->renderBuffer = renderBuffer;
     ppu->renderPitch = (uint32_t)pitch;
+    ppu->extraLeftCur = extraLeftCur;
+    ppu->extraRightCur = extraRightCur;
+    ppu->extraLeftRight = extraLeftRight;
   }
   ppu->vramIncrement = 1;
 }
@@ -59,6 +65,15 @@ void ppu_saveload(Ppu *ppu, SaveLoadInfo *sli) {
 void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_flags) {
   ppu->renderPitch = (uint)pitch;
   ppu->renderBuffer = pixels;
+}
+
+void PpuSetExtraViewport(Ppu *ppu, int width) {
+  int extra = (width - 256) / 2;
+  if (extra < 0 || extra > kPpuExtraLeftRight || (width & 1))
+    extra = 0;
+  ppu->extraLeftCur = (uint8_t)extra;
+  ppu->extraRightCur = (uint8_t)extra;
+  ppu->extraLeftRight = kPpuExtraLeftRight;
 }
 
 bool ppu_checkOverscan(Ppu* ppu) {
@@ -226,7 +241,7 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZb
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
       continue;  // layer is disabled for this window part
-    uint x = win.edges[windex] + ppu->hScroll[layer];
+    int x = win.edges[windex] + ppu->hScroll[layer];
     uint w = win.edges[windex + 1] - win.edges[windex];
     PpuZbufType *dstz = ppu->bgBuffers[sub].data + win.edges[windex] + kPpuExtraLeftRight;
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
@@ -324,7 +339,7 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZb
   for (size_t windex = 0; windex < win.nr; windex++) {
     if (win.bits & (1 << windex))
       continue;  // layer is disabled for this window part
-    uint x = win.edges[windex] + ppu->hScroll[layer];
+    int x = win.edges[windex] + ppu->hScroll[layer];
     uint w = win.edges[windex + 1] - win.edges[windex];
     PpuZbufType *dstz = ppu->bgBuffers[sub].data + win.edges[windex] + kPpuExtraLeftRight;
     const uint16 *tp = tps[x >> 8 & 1] + ((x >> 3) & 0x1f);
@@ -428,7 +443,7 @@ static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu, uint y, bool sub, uint layer
     const uint16 *tp_last = tps[x >> 8 & 1] + 31, *tp_next = tps[(x >> 8 & 1) ^ 1];
     x &= 7;
     int mosaic_size = PPU_mosaicSize(ppu);
-    int w = mosaic_size - (sx - ppu->mosaicModulo[sx]);
+    int w = mosaic_size - (sx - ppu->mosaicModulo[sx + kPpuExtraLeftRight]);
     do {
       w = IntMin(w, dstz_end - dstz);
       uint32 tile = *tp;
@@ -487,7 +502,7 @@ static void PpuDrawBackground_2bpp_mosaic(Ppu *ppu, int y, bool sub, uint layer,
     const uint16 *tp_last = tps[x >> 8 & 1] + 31, *tp_next = tps[(x >> 8 & 1) ^ 1];
     x &= 7;
     int mosaic_size = PPU_mosaicSize(ppu);
-    int w = mosaic_size - (sx - ppu->mosaicModulo[sx]);
+    int w = mosaic_size - (sx - ppu->mosaicModulo[sx + kPpuExtraLeftRight]);
     do {
       w = IntMin(w, dstz_end - dstz);
       uint32 tile = *tp;
@@ -554,7 +569,7 @@ static void PpuDrawBackground_mode7(Ppu *ppu, uint y, bool sub, PpuZbufType z) {
     uint32 outside_value = PPU_m7largeField(ppu) ? 0x3ffff : 0xffffffff;
     bool char_fill = PPU_m7charFill(ppu);
     if (mosaic_enabled) {
-      int w = PPU_mosaicSize(ppu) - (x - ppu->mosaicModulo[x]);
+      int w = PPU_mosaicSize(ppu) - (x - ppu->mosaicModulo[x + kPpuExtraLeftRight]);
       do {
         w = IntMin(w, dstz_end - dstz);
         if ((uint32)(xpos | ypos) > outside_value) {

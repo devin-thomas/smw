@@ -70,7 +70,7 @@ void PpuDrawWholeLineOldPpu(Ppu *ppu, int line) {
   // actual line
   if (PPU_mode(ppu) == 7)
     ppu_calculateMode7Starts(ppu, line);
-  for (int x = 0; x < 256; x++) {
+  for (int x = -ppu->extraLeftCur; x < 256 + ppu->extraRightCur; x++) {
     ppu_handlePixel(ppu, x, line);
   }
 }

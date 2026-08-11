@@ -53,6 +53,8 @@ extern uint8 game_id;
 typedef struct SpcPlayer SpcPlayer;
 extern SpcPlayer *g_spc_player;
 
+int RtlGetViewportExtra(void);
+
 void mov24(LongPtr *dst, uint32 src);
 uint32 Load24(LongPtr src);
 void MemCpy(void *dst, const void *src, int size);
