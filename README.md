@@ -26,6 +26,12 @@ You must self-build for now. Easy method on 64-bit Windows (no terminal or big d
 
 For other platforms and compilers, see: https://github.com/snesrev/smw/blob/main/BUILDING.md
 
+### iPhone and iPad
+
+The project includes a native, self-built iOS and iPadOS port for iOS 16 or later. It runs the same reverse-engineered game core locally and adds landscape touch controls, physical-controller support, quick save/load, device-rate audio, and pixel-perfect integer scaling.
+
+The repository and app bundle do not include Nintendo ROM data. You must generate `smw_assets.dat` locally from a legally owned US ROM before building. See the [iPhone and iPad guide](docs/IOS.md) for setup, controls, signing, and installation.
+
 When running, it runs an emulated version in the background and compares the ram state every frame. If it detects a mismatch, it saves a snapshot in saves/ and displays a counter on screen counting down from 300. Please submit these bug snapshots on discord so that they can be fixed.
 
 ## Usage and controls

@@ -96,6 +96,48 @@ make clean all  # clear gen+obj and rebuild
 CC=clang make   # specify compiler
 ```
 
+# iPhone and iPad
+
+The native iOS and iPadOS target requires:
+
+* macOS with Xcode and the iOS SDK
+* CMake 3.25 or later and Git
+* iOS or iPadOS 16 or later
+* `smw_assets.dat`, generated locally from a legally owned US ROM
+* An Apple development team for installation on physical hardware
+
+Place `smw.sfc` at the repository root and generate the local asset bundle if it does not already exist:
+
+```sh
+python3 assets/restool.py
+```
+
+Configure an Apple Silicon simulator build:
+
+```sh
+cmake -S . -B build-ios-sim -G Xcode \
+  -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_SYSROOT=iphonesimulator \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
+open build-ios-sim/SMWIOS.xcodeproj
+```
+
+Configure a physical-device build:
+
+```sh
+cmake -S . -B build-ios-device -G Xcode \
+  -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_SYSROOT=iphoneos \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
+open build-ios-device/SMWIOS.xcodeproj
+```
+
+Select the `SuperMarioWorld` scheme. For a device build, choose your development team and a unique bundle identifier in Xcode before running. CMake fetches SDL 2.32.10 during the first configure, so that step requires network access.
+
+See [docs/IOS.md](docs/IOS.md) for installation and controls. Contributors should also read [docs/IOS_DEVELOPMENT.md](docs/IOS_DEVELOPMENT.md) before changing rendering, lifecycle, audio, save-state, or touch-control code.
+
 # Nintendo Switch
 
 Dependencies and requirements:
